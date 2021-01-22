@@ -8,6 +8,7 @@
 #include <linux/i2c-dev.h> 	/*struct i2c_msg*/
 #include <sys/ioctl.h>		/*ioctl()*/
 //#include <sys/io.h>   	/*in()/out()*/
+#include<signal.h>
 
 #include "ad-litbmc-fwupd-src.h"  	/* all macro's used in this application are defined */
 
@@ -552,7 +553,7 @@ int ValidateBinFile(char *in_cFileName, char *in_cBoardversion, unsigned char in
 	int iReadCnt = 0;
 	unsigned char g_ucIsDataMatch = 0;
 	unsigned char ucFileId = 0;
-	unsigned char ucTargetId = 1;
+	unsigned char ucTargetId = 0;
 	char brdStr[10];
 	fd = open(in_cFileName, O_RDONLY);
 	if(fd < 0)
@@ -580,7 +581,7 @@ int ValidateBinFile(char *in_cFileName, char *in_cBoardversion, unsigned char in
 	if(!g_ucIsDataMatch)
 	{
         	close(fd);
-		printf("\nBin file is not valid. please provide valid bin file\n");
+		printf("\nFirmware file is not valid. please provide valid firmware file to update BMC.\n");
 		return EC_FAILED;
 	}
 	g_ucIsDataMatch = 0;
@@ -601,55 +602,36 @@ int ValidateBinFile(char *in_cFileName, char *in_cBoardversion, unsigned char in
 	if(!g_ucIsDataMatch)
 	{
         	close(fd);
-		printf("\nBin file is not valid. please provide valid bin file\n");
+		printf("\nFirmware file is not valid. please provide valid firmware file to update BMC.\n");
 		return EC_FAILED;
 	}
 	
 	/* to get version from file this validation not required */
 	if(in_ucFile != 1)
 	{
+			int iCnt = 0;
+			char cModuleName[20] = {0};
+			int iLoop = Index + strlen("BMC ");
+			while(buffer[iLoop] != ' ')
+			{
+				cModuleName[iCnt] = buffer[iLoop];
+				iCnt++;
+				iLoop++;
+			}
+
 		for(Index = 0; Index < 150; Index++)
-		{
-			if(strncmp(&(buffer[Index]), "PX-30", strlen("PX-30")) == 0)
-			{
-				ucFileId = 1;
-				break;
-			}
-			if(strncmp(&(buffer[Index]), "LEC-iMX6R2", strlen("LEC-iMX6R2")) == 0)
-			{
-				ucFileId = 2;
-				break;
-			}
-			if(strncmp(&(buffer[Index]), "LEC-iMX8M", strlen("LEC-iMX8M")) == 0)
-			{
-				ucFileId = 3;
-				break;
-			}
-		}
+                {
+                        if(strncmp(&(buffer[Index]), in_cBoardversion, strlen(in_cBoardversion)) == 0)
+                        {
+                                ucTargetId = 1;
+                                break;
+                        }
+                }
 
-		for(Index = 0; Index < BOARD_STR_MAX_LEN; Index++)
-		{
-			if(strncmp(&(in_cBoardversion[Index]), "PX-30", strlen("PX-30")) == 0)
-			{
-				ucTargetId = 1;
-				break;
-			}
-			if(strncmp(&(in_cBoardversion[Index]), "LEC-iMX6R2", strlen("LEC-iMX6R2")) == 0)
-			{
-				ucTargetId = 2;
-				break;
-			}
-			if(strncmp(&(in_cBoardversion[Index]), "LEC-iMX8M", strlen("LEC-iMX8M")) == 0)
-			{
-				ucTargetId = 3;
-				break;
-			}
-		}
-
-		if(ucFileId != ucTargetId)
+		if(!ucTargetId)
 		{
 			close(fd);
-			printf("\nBin file is not valid. please provide valid bin file\n");
+			printf("\nFirmware file is not suitable for current BMC, Tool expecting %s. But User provided firmware file is for %s.\n", in_cBoardversion, cModuleName);
 			return EC_FAILED;
 		}
 	}
@@ -670,11 +652,15 @@ int main(int argc, char *argv[])
 	int iRetVal = 0;
 	int iData = 0;
 	int Index = 0;
+	int iLoop = 0;
+	int iCnt = 0;
+	char cModuleName[BMC_V1_MAX_LEN] = {0};
 	unsigned char ucMatch = 0;
 	unsigned int uiBootDelay = 0;
 	int iChoice = 0;
-
+	int iIsBMCNotValid = 1; /* 1- dont validate firmware file with target BMC, 0- validate firmware file with target BMC */
 	unsigned char ucUserChoice = 0; /* 1 -  file update, 2- bin file version read, 3- target board version read */
+
 
 	char *AppInfo[] = {"-u", "-d" "-f", "-t"};
 
@@ -695,7 +681,7 @@ int main(int argc, char *argv[])
 		case 1:
 			ShowAboutApp();
 			break;
-		case 2:
+		case 2: /* Get BMC version from target board */
 			iRetVal = Sema_LiteBMCGetVersion(version1, SEMA_CMD_RD_VERSION1);
 		        iRetVal = Sema_LiteBMCGetVersion(version2, SEMA_CMD_RD_VERSION2);
 		        strcpy(boardversion, version1);
@@ -710,12 +696,12 @@ int main(int argc, char *argv[])
                 	}
 			if(!ucMatch)
 			{
-				printf("BMC corrupted...!\n");
+				printf("Firmware is corrupted, please upate the firmware.\n");
 				break;
 			}
 		        printf("Firmware version on target device: %s\n", boardversion);
 			break;
-		case 3:
+		case 3: /* Get BMC version from file */
 			cFileName = argv[3];
 			g_ucIsFileSelect = 1;
 			iRetVal = ValidateBinFile(cFileName, NULL, 1);
@@ -729,29 +715,50 @@ int main(int argc, char *argv[])
 		        iRetVal = Sema_LiteBMCGetVersion(version2, SEMA_CMD_RD_VERSION2);
 		        strcpy(boardversion, version1);
 		        strcat(boardversion, version2);
+
 			for(Index = 0; Index < BOARD_STR_MAX_LEN; Index++)
-                	{
-                        	if(strncmp(&(boardversion[Index]), "ADLINK", strlen("ADLINK")) == 0)
-                        	{
-					ucMatch = 1;
-                                	break;
-                        	}
-                	}
-			if(!ucMatch)
-			{
-				printf("BMC corrupted...!\n");
-				break;
-			}
+                        {
+                                if(strncmp(&(boardversion[Index]), "BMC", strlen("BMC")) == 0)
+                                {
+                                        ucMatch = 1;
+                                        break;
+                                }
+                        }
 			
-			printf("Validating the bin file is in progress...");
-			fflush(stdout);
+			/* validate BMC firmware file only if target BMC having vesion */
 			cFileName = argv[2];
-			iRetVal = ValidateBinFile(cFileName, boardversion, 0);
+			if(ucMatch)
+			{
+				iLoop = Index + strlen("BMC ");
+				while(boardversion[iLoop] != ' ')
+				{
+					cModuleName[iCnt] = boardversion[iLoop];
+					iCnt++;
+					iLoop++;
+					iIsBMCNotValid = 0;
+				}
+
+			}
+
+			printf("Firmware file validation is in progress...");
+			fflush(stdout);
+			iRetVal = ValidateBinFile(cFileName, cModuleName, iIsBMCNotValid);
 			if(iRetVal)
 			{
 				break;
 			}
+			else
+			{
+				printf("\nFirmware file validation done successfully...");
+			}
+			if(iIsBMCNotValid)
+			{
+				printf("\nFirmware version not available on the target BMC.");
+			}
 
+			printf("\nFirmware flashing is in progress, Please don't abort the application.");
+			fflush(stdout);
+			//cFileName = argv[2];
 			iRetVal = Sema_UpdateLiteBMC(cFileName);
 			if(!iRetVal)
 			{
@@ -759,7 +766,6 @@ int main(int argc, char *argv[])
 				Sema_LiteBMCGetVersion(version2, SEMA_CMD_RD_VERSION2);
 				strcpy(boardversion, version1);
 				strcat(boardversion, version2);	
-				
 		        	printf("Firmware version on target device: %s\n", boardversion);
 				iRetVal = Sema_LiteBMCGetVersionFromFile(cFileName);
 				printf("Updated successfully and please reboot the system\n");
@@ -907,7 +913,7 @@ void ShowAboutApp(void)
 	printf( "Usage :\n");
 	printf( "1. Update Firmware : ad-litbmc-fwupd -u filename.bin\n");
 	printf( "2. Display Firmware version on Target device : ad-litbmc-fwupd -d -t\n");
-	printf( "3. Display Firmware version in bin file : ad-litbmc-fwupd -d -f filename.bint\n");
+	printf( "3. Display Firmware version in bin file : ad-litbmc-fwupd -d -f filename.bin\n");
 	printf( "Options :\n");
         printf( "  -u start to update the firmware\n");
         printf( "  -d -t Display the firmware version on your target device or module\n");
