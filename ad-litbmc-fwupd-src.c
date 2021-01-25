@@ -751,10 +751,10 @@ int main(int argc, char *argv[])
 			{
 				printf("\nFirmware file validation done successfully...");
 			}
-			if(iIsBMCNotValid)
-			{
-				printf("\nFirmware version not available on the target BMC.");
-			}
+				if(iIsBMCNotValid)
+				{
+					printf("\nFirmware version not available on the target BMC.");
+				}
 
 			printf("\nFirmware flashing is in progress, Please don't abort the application.");
 			fflush(stdout);
