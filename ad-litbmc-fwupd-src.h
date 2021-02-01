@@ -2,6 +2,12 @@
 #define SEMA_UPDATE_H
 
 
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)
+#define __x86__
+#else
+#undef __x86__
+#endif
+
 #define LITEBMC_MAJOR_VER  "1"
 #define LITEBMC_MINOR_VER  "01"
 
@@ -28,7 +34,7 @@
 #define SMB_TRANS_BUFFER_LEN            33
 
 #define EREASE_DELAY    100
-#define SEND_EREASE_DELAY    2
+#define SEND_EREASE_DELAY    5
 
 #define SEMA_FAILURE		-1
 #define SEMA_SUCCESS		0
@@ -47,7 +53,6 @@
 #define BMC_V2_MAX_LEN 		33
 #define BOARD_STR_MAX_LEN 	100
 
-#define Sleep(a)        usleep(a*1000)
 #define SleepMS(msecs)  usleep(1000*msecs)
 
 #define SEMA_VERSION_MAJOR      2
@@ -56,6 +61,9 @@
 #define SEMA_VENDOR             "LiPPERT ADLINK Technology GmbH, Germany"
 #define SEMA_COPYRIGHT_YEAR     "(c)2009-2021" 
 #define SEND_COMMAND_DELAY	150
+
+
+
 
 int OpenI2CDevice(void);
 int Sema_LiteBMCGetVersionFromFile(char* in_cFileName);
@@ -72,5 +80,13 @@ int ValidateBinFile(char *in_cFileName, char *in_cBoardVersion, unsigned char);
 int PassArgs(int argc, char* argv[]);
 void ShowAboutApp(void);
 void ShowHelp(void);
+
+
+void Linux_SMBus_SMITemp_Start( void );
+#define PortTalk_InByte(PortAddress)                    inb((unsigned short)(PortAddress))
+#define PortTalk_OutByte(PortAddress, Value)    outb((unsigned char )(Value), (unsigned short)(PortAddress))
+#define PortTalk_InDWord(PortAddress)                   inl((unsigned int )(PortAddress))
+#define PortTalk_OutDWord(PortAddress, Value)   outl((unsigned long)Value, (unsigned short)(PortAddress))
+
 #endif
 

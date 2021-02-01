@@ -7,7 +7,10 @@
 #include <linux/i2c.h>		/* struct i2c_rdwr_ioctl_data */ 		
 #include <linux/i2c-dev.h> 	/*struct i2c_msg*/
 #include <sys/ioctl.h>		/*ioctl()*/
-//#include <sys/io.h>   	/*in()/out()*/
+
+#ifdef __x86__
+#include <sys/io.h>   	/*in()/out()*/
+#endif
 #include<signal.h>
 
 #include "ad-litbmc-fwupd-src.h"  	/* all macro's used in this application are defined */
@@ -15,6 +18,7 @@
 unsigned int __updatefilesize = 0;
 int g_iDevHandle = 0;
 unsigned char g_ucIsFileSelect = 0;
+unsigned char g_ucIsUpdateRecovery = 0;
 /**
  ************************************************************************************
  *       \FUNCTION       int SetUpdateFileSize(unsigned int)
@@ -55,7 +59,7 @@ int OpenI2CDevice(void)
 	int iIndex = 0;
 	int iCount = 0;
 	FILE *ptr;
-	char version1[BMC_V1_MAX_LEN] = {0};
+	char version1[BMC_V1_MAX_LEN+2] = {0};
 
 	/* verifiying how many i2c buses are there */
 	ptr = popen("i2cdetect -l | wc -l", "r");
@@ -71,8 +75,9 @@ int OpenI2CDevice(void)
 		}
 
 		g_iDevHandle = iHandle;
+
 		/* This is just for validating that opened i2c bus is actually connected to our slave(here:0x28) address or not */
-		iRetVal = Sema_LiteBMCGetVersion(version1, SEMA_CMD_RD_VERSION1); 
+		iRetVal = Sema_LiteBMCGetVersion(version1, SEMA_CMD_RD_VERSION1);
 		if(iRetVal == SEMA_FAILURE)
 		{
 			continue;
@@ -275,7 +280,11 @@ int Sema_LiteBMCEnterBootLoader(void)
 	unsigned int update_filesize = GetUpdateFileSize();
 
 	temp = Sema_SendSlaveCommand(SEMA_SLAVE_ADDR, SEMA_CMD_LEAVEAPP, 1, buffer);     // 1. Leave application (->return to boot loader)
+#ifndef __x86__ /* for x86 board need to more delay than x86 after issue of Leave application command */
 	SleepMS(400);
+#else	
+	SleepMS(600);
+#endif	
 
 	buffer[0] = SEMA_CMD_BL_GET_STATUS;
 	if(Sema_LiteBMCSendPacket(buffer, 1, 1)<0)
@@ -303,21 +312,30 @@ int Sema_SendSlaveCommand(unsigned char in_ucAddress, unsigned char in_ucCommand
 	struct i2c_msg  msgs[2];
 	struct i2c_rdwr_ioctl_data msgset;
 	char   recv_buf[MAX_RECV_BYTES];
-	unsigned ret;
+	int  ret;
+       	int iReadCnt = 0;	
+	int iIndex = 0;
+	struct i2c_smbus_ioctl_data smbus_data;
+        union  i2c_smbus_data       data;
 
 	if(g_iDevHandle == -1)
 	{
 		return 0;
 	}
 
+	if(in_ucBufLength > 32)
+	{
+		in_ucBufLength = 32;
+	}
+
 	if(in_ucAddress & 0x01)
 	{
+		/* For ARM with I2C transactions tested */
+#ifndef __x86__
 		msgs[0].addr  = in_ucAddress >> 1;           // Mask RW-Bit
 		msgs[0].flags = 0;                                      // Direction: write
 		msgs[0].buf   = (char *)&in_ucCommand;
 		msgs[0].len   = 1;
-
-		// Get entire messsage
 		msgs[1].addr  = in_ucAddress >> 1;
 		msgs[1].flags = I2C_M_RD ;               // Set READ flag
 		msgs[1].buf   = recv_buf;
@@ -326,18 +344,36 @@ int Sema_SendSlaveCommand(unsigned char in_ucAddress, unsigned char in_ucCommand
 		msgset.msgs  = msgs;
 		msgset.nmsgs = 2;
 
+		SleepMS(1);
 		ret = ioctl(g_iDevHandle, I2C_RDWR, &msgset);
-
 		if((signed)ret == -1)
 		{			
 			return 0;
 		}
-		SleepMS(1);
 		memcpy(in_cBuffer, recv_buf+1, recv_buf[0]);
-		return recv_buf[0];
+		iReadCnt = (int)(recv_buf[0] & 0xFF);
+#else
+		/* For X86 with SMBUS transactions tested */
+                smbus_data.data = &data;
+                smbus_data.command = in_ucCommand;
+                ret = ioctl(g_iDevHandle, I2C_SLAVE, in_ucAddress >> 1); // Mask RW-Bit
+                smbus_data.read_write = I2C_SMBUS_READ; // Direction: read
+                smbus_data.size = I2C_SMBUS_BLOCK_DATA;
+		SleepMS(1);
+                ret = ioctl(g_iDevHandle, I2C_SMBUS, &smbus_data);
+                if(ret < 0)
+                {
+                        return 0;
+                }
+		memcpy(in_cBuffer, &smbus_data.data->block[1], smbus_data.data->block[0]);
+		iReadCnt = (int)(data.block[0] & 0xFF);
+#endif
+		return iReadCnt;	
 	}
 	else
 	{
+#ifndef __x86__
+		/* For ARM with I2C transactions tested */
 		memcpy(recv_buf+2, in_cBuffer, in_ucBufLength);
 		recv_buf[0] = in_ucCommand;
 		recv_buf[1] =  in_ucBufLength;
@@ -345,7 +381,6 @@ int Sema_SendSlaveCommand(unsigned char in_ucAddress, unsigned char in_ucCommand
 		msgs[0].flags = 0;
 		msgs[0].buf   = recv_buf;
 		msgs[0].len   =  in_ucBufLength+2 ;
-
 		msgset.msgs  = msgs;
 		msgset.nmsgs = 1;
 
@@ -354,9 +389,26 @@ int Sema_SendSlaveCommand(unsigned char in_ucAddress, unsigned char in_ucCommand
 		{
 			return 0;
 		}
-
 		SleepMS(1);
-
+#else
+		/* For X86 with SMBUS transactions tested */
+		smbus_data.read_write = I2C_SMBUS_WRITE;
+                smbus_data.command = in_ucCommand;
+                smbus_data.size = I2C_SMBUS_BLOCK_DATA;
+		for (iIndex = 1; iIndex <= in_ucBufLength; iIndex++)
+		{
+        		data.block[iIndex] = in_cBuffer[iIndex - 1];
+		}
+		data.block[0] = in_ucBufLength;
+		smbus_data.data = &data;
+		
+		ret = ioctl(g_iDevHandle, I2C_SMBUS, &smbus_data);
+                if(ret < 0)
+                {
+                        return 0;
+                }
+                SleepMS(1);
+#endif
 		return  in_ucBufLength;
 	}
 
@@ -410,22 +462,15 @@ int Sema_LiteBMCSendPacket(char* in_cBuffer, unsigned char in_ucBufLength, unsig
 		/*Read data from BMC */
 		if(Sema_SendSlaveCommand((SEMA_SLAVE_ADDR|0x1), 0xFF, 0, acked) == 0)
 		{
+			//printf("\n\t\t Sema address failed");
 			return EC_FAILED;
 		}
-
-		/*if (retry < 50)
-		  {
-		  retry++;
-		  }
-		  else
-		  {
-		  break;
-		  }*/
 		SleepMS(SEND_EREASE_DELAY); // Some BMC need the delay
-	}while(acked[1] == 0);
+	}while((acked[1] & 0xFF) == 0);
 
-	if(acked[1] != 0xcc)
+	if((acked[1]&0xFF) != 0xcc)
 	{
+		//printf("\n\t\t 1. Sema address failed %X", acked[1]);
 		return EC_FAILED;
 	}
 
@@ -489,7 +534,7 @@ int Sema_LiteBMCGetPacket(char* in_cBuffer, char *in_cBuffLength)
 	}
 
 	temp = 0xcc;
-	Sema_SendSlaveCommand(SEMA_SLAVE_ADDR, 0x21, SEMA_CMD_BOOTSYNC, &temp);
+	Sema_SendSlaveCommand(SEMA_SLAVE_ADDR, SEMA_CMD_BOOTSYNC, 1, &temp);
 
 	return SEMA_SUCCESS;
 }
@@ -548,17 +593,34 @@ int Sema_LiteBMCGetVersionFromFile(char *in_cFileName)
 int ValidateBinFile(char *in_cFileName, char *in_cBoardversion, unsigned char in_ucFile)
 {
 	int Index = 0, fd = 0;
+	char cIsBin[10] = {0};
 	char buffer[BIN_FILE_READ_SECTOR], Bmc_name[BIN_FILE_BMC_VERSION] = {0};
 	int iOffset = 0;
 	int iReadCnt = 0;
 	unsigned char g_ucIsDataMatch = 0;
 	unsigned char ucFileId = 0;
 	unsigned char ucTargetId = 0;
+	int iCnt = 0;
+	char cModuleName[20] = {0};
+
 	char brdStr[10];
+
+	iCnt = strlen(in_cFileName);
+	if(iCnt < 4)
+	{
+		iCnt = 4;
+	}
+	strcpy(cIsBin, &in_cFileName[iCnt - 4]);
+	if(strncmp(cIsBin, ".bin", strlen(".bin")) != 0)
+	{
+		printf("\nInvalid firmware file extension, please provide firmware file with .bin extension.\n");
+		return EC_FAILED;
+	}
+
 	fd = open(in_cFileName, O_RDONLY);
 	if(fd < 0)
 	{
-		printf("File open error\n");
+		printf("\nFile open error\n");
 		return EC_FILE_NOT_FOUND;
 	}
 	while(read(fd, buffer, 512) > BIN_FILE_SEEK_SET)
@@ -607,26 +669,25 @@ int ValidateBinFile(char *in_cFileName, char *in_cBoardversion, unsigned char in
 	}
 	
 	/* to get version from file this validation not required */
+	iCnt = 0;
 	if(in_ucFile != 1)
 	{
-			int iCnt = 0;
-			char cModuleName[20] = {0};
-			int iLoop = Index + strlen("BMC ");
-			while(buffer[iLoop] != ' ')
-			{
-				cModuleName[iCnt] = buffer[iLoop];
-				iCnt++;
-				iLoop++;
-			}
+		int iLoop = Index + strlen("BMC ");
+		while(buffer[iLoop] != ' ')
+		{
+			cModuleName[iCnt] = buffer[iLoop];
+			iCnt++;
+			iLoop++;
+		}
 
 		for(Index = 0; Index < 150; Index++)
-                {
-                        if(strncmp(&(buffer[Index]), in_cBoardversion, strlen(in_cBoardversion)) == 0)
-                        {
-                                ucTargetId = 1;
-                                break;
-                        }
-                }
+		{
+			if(strncmp(&(buffer[Index]), in_cBoardversion, strlen(in_cBoardversion)) == 0)
+			{
+				ucTargetId = 1;
+				break;
+			}
+		}
 
 		if(!ucTargetId)
 		{
@@ -658,9 +719,6 @@ int main(int argc, char *argv[])
 	unsigned char ucMatch = 0;
 	unsigned int uiBootDelay = 0;
 	int iChoice = 0;
-	int iIsBMCNotValid = 1; /* 1- dont validate firmware file with target BMC, 0- validate firmware file with target BMC */
-	unsigned char ucUserChoice = 0; /* 1 -  file update, 2- bin file version read, 3- target board version read */
-
 
 	char *AppInfo[] = {"-u", "-d" "-f", "-t"};
 
@@ -696,12 +754,13 @@ int main(int argc, char *argv[])
                 	}
 			if(!ucMatch)
 			{
-				printf("Firmware is corrupted, please upate the firmware.\n");
+				printf("Firmware is corrupted, please update the firmware in recovery mode.\n");
 				break;
 			}
 		        printf("Firmware version on target device: %s\n", boardversion);
 			break;
-		case 3: /* Get BMC version from file */
+		case 3: 
+			/* Get BMC version from file */
 			cFileName = argv[3];
 			g_ucIsFileSelect = 1;
 			iRetVal = ValidateBinFile(cFileName, NULL, 1);
@@ -711,38 +770,41 @@ int main(int argc, char *argv[])
 			}
 			break;
 		case 4:
-			iRetVal = Sema_LiteBMCGetVersion(version1, SEMA_CMD_RD_VERSION1);
-		        iRetVal = Sema_LiteBMCGetVersion(version2, SEMA_CMD_RD_VERSION2);
-		        strcpy(boardversion, version1);
-		        strcat(boardversion, version2);
-
-			for(Index = 0; Index < BOARD_STR_MAX_LEN; Index++)
-                        {
-                                if(strncmp(&(boardversion[Index]), "BMC", strlen("BMC")) == 0)
-                                {
-                                        ucMatch = 1;
-                                        break;
-                                }
-                        }
-			
-			/* validate BMC firmware file only if target BMC having vesion */
-			cFileName = argv[2];
-			if(ucMatch)
-			{
-				iLoop = Index + strlen("BMC ");
-				while(boardversion[iLoop] != ' ')
+			if(!g_ucIsUpdateRecovery) /* for firmware updation in normal mode */
+			{	
+				iRetVal = Sema_LiteBMCGetVersion(version1, SEMA_CMD_RD_VERSION1);
+				iRetVal = Sema_LiteBMCGetVersion(version2, SEMA_CMD_RD_VERSION2);
+				strcpy(boardversion, version1);
+				strcat(boardversion, version2);
+				for(Index = 0; Index < BOARD_STR_MAX_LEN; Index++)
 				{
-					cModuleName[iCnt] = boardversion[iLoop];
-					iCnt++;
-					iLoop++;
-					iIsBMCNotValid = 0;
+					if(strncmp(&(boardversion[Index]), "BMC", strlen("BMC")) == 0)
+					{
+						ucMatch = 1;
+						break;
+					}
 				}
-
+				if(ucMatch)
+				{
+					iLoop = Index + strlen("BMC ");
+					while(boardversion[iLoop] != ' ')
+					{
+						cModuleName[iCnt] = boardversion[iLoop];
+						iCnt++;
+						iLoop++;
+					}
+				}
+				else
+				{
+					printf("Firmware is corrupted, please update the firmware in recovery mode.\n");
+					break;
+				}
 			}
-
+			
 			printf("Firmware file validation is in progress...");
 			fflush(stdout);
-			iRetVal = ValidateBinFile(cFileName, cModuleName, iIsBMCNotValid);
+			cFileName = argv[2];
+			iRetVal = ValidateBinFile(cFileName, cModuleName, g_ucIsUpdateRecovery);
 			if(iRetVal)
 			{
 				break;
@@ -751,17 +813,14 @@ int main(int argc, char *argv[])
 			{
 				printf("\nFirmware file validation done successfully...");
 			}
-				if(iIsBMCNotValid)
-				{
-					printf("\nFirmware version not available on the target BMC.");
-				}
-
+			printf("\nFirmware updating in %s mode.", g_ucIsUpdateRecovery ? "recovery" :"normal");
 			printf("\nFirmware flashing is in progress, Please don't abort the application.");
 			fflush(stdout);
-			//cFileName = argv[2];
+			
 			iRetVal = Sema_UpdateLiteBMC(cFileName);
 			if(!iRetVal)
 			{
+				SleepMS(500);
 				Sema_LiteBMCGetVersion(version1, SEMA_CMD_RD_VERSION1);
 				Sema_LiteBMCGetVersion(version2, SEMA_CMD_RD_VERSION2);
 				strcpy(boardversion, version1);
@@ -796,6 +855,7 @@ int Sema_LiteBMCGetVersion(char *in_cBuffer, unsigned int in_uiCommand)
 {
 	int iReadCnt = 0;
 	int iRetVal = 0;
+	SleepMS(10);
 	iReadCnt = Sema_SendSlaveCommand(SEMA_SLAVE_ADDR|0x1, in_uiCommand, 0, in_cBuffer);
 	if(iReadCnt > 0)
 	{
@@ -816,7 +876,9 @@ int PassArgs(int argc, char* argv[])
 	int useroption = 0;
 	int StrCnt = 0;
 	int iTemp = 0;
-	char *ucChoice[] = {"-u", "-d", "-t", "-f"};
+
+	/* -u for update normal mode, -r -update recovery mode, -t -target version, -f -firmware file version */
+	char *ucChoice[] = {"-u", "-r",  "-d", "-t", "-f"};
 	switch(argc)
 	{
 		case 1:
@@ -833,15 +895,24 @@ int PassArgs(int argc, char* argv[])
 				break;
 			}
 			iTemp = strcmp(ucChoice[0], argv[1]);
+			
 			if(iTemp)
 			{
+				iTemp = strcmp(ucChoice[1], argv[1]);
+				if(!iTemp)
+				{
+					g_ucIsUpdateRecovery = 1;
+					useroption = 4;
+					break;
+				}	
+
 				StrCnt = strlen(argv[2]);
 				if(StrCnt > 2)
 				{
 					useroption = 0;
 					break;
 				}
-				if((!strcmp(ucChoice[1], argv[1])) && (!strcmp(ucChoice[2], argv[2])))
+				if((!strcmp(ucChoice[2], argv[1])) && (!strcmp(ucChoice[3], argv[2])))
 				{
 					useroption = 2; /*display firmware version of target device */
 					break;
@@ -852,6 +923,7 @@ int PassArgs(int argc, char* argv[])
 					break;
 				}
 			}
+			g_ucIsUpdateRecovery = 0;
 			useroption = 4; /* update the firmware version */
 			break;
 		case 4:
@@ -868,7 +940,7 @@ int PassArgs(int argc, char* argv[])
                                 break;
                         }
 			
-			if((!strcmp(ucChoice[1], argv[1])) && (!strcmp(ucChoice[3], argv[2])))
+			if((!strcmp(ucChoice[2], argv[1])) && (!strcmp(ucChoice[4], argv[2])))
 			{
 				useroption = 3; /* disaply firmware version from file */
 				break;
@@ -890,8 +962,12 @@ void ShowHelp(void)
 {
         printf("Usage:\n");
         printf("\t-h Display this screen\n\n");
-        printf("\t-u Update BMC firmware\n");
+        printf("\t-u Update BMC firmware in normal mode\n");
         printf("\t  -u <filename>\n");
+        printf("\t\t<filename>\tfull path of firmware image file\n\n");
+
+        printf("\t-r Update BMC firmware in recovery mode\n");
+        printf("\t  -r <filename>\n");
         printf("\t\t<filename>\tfull path of firmware image file\n\n");
 
         printf("\t-d Display firmware version\n");
@@ -904,19 +980,24 @@ void ShowHelp(void)
 
 void ShowAboutApp(void)
 {
-
+#ifndef __x86__
 	printf( "Function : Lite BMC Firmware Flash Utility on ADLINK ARM platform\n");
+#else
+	printf( "Function : Lite BMC Firmware Flash Utility on ADLINK x86-64 platform\n");
+#endif	
 
 	printf( "Version : %s.%s\n", LITEBMC_MAJOR_VER, LITEBMC_MINOR_VER);
-	
 
 	printf( "Usage :\n");
-	printf( "1. Update Firmware : ad-litbmc-fwupd -u filename.bin\n");
-	printf( "2. Display Firmware version on Target device : ad-litbmc-fwupd -d -t\n");
-	printf( "3. Display Firmware version in bin file : ad-litbmc-fwupd -d -f filename.bin\n");
+	printf( "1. Update Firmware in normal mode: ad-litbmc-fwupd -u filename.bin\n");
+	printf( "2. Update Firmware in recovery mode: ad-litbmc-fwupd -r filename.bin\n");
+	printf( "3. Display Firmware version on Target device : ad-litbmc-fwupd -d -t\n");
+	printf( "4. Display Firmware version in bin file : ad-litbmc-fwupd -d -f filename.bin\n");
 	printf( "Options :\n");
-        printf( "  -u start to update the firmware\n");
+        printf( "  -u start to update the firmware in normal mode\n");
+        printf( "  -r start to update the firmware in recovery mode\n");
         printf( "  -d -t Display the firmware version on your target device or module\n");
         printf( "  -d -f Display the firmware version on your bin file\n");
 	printf( "  -h|? Display command line help information\n");
 }
+
