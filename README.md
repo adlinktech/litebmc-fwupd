@@ -1,6 +1,6 @@
  
 
-##Lite BMC Firmware Flash utility
+## Lite BMC Firmware Flash utility
 
 to update the SEMA BMC firmware. It uses I2C (for arm) / SMBUS(for x86) to communicate with the Lite BMC. This document will help to understand the Flash Firmware Utility supported features and how user can use it.
 
