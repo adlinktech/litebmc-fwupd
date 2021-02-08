@@ -1,8 +1,6 @@
  
 
-## Lite BMC Firmware Flash Utility
-
-Provides LiteBMC firmware Flash Utiluty on SMARC ARM & x86-64 platforms. It uses I2C (for arm) / SMBUS(for x86) to communicate with the Lite BMC. This document will help to understand the Flash Firmware Utility supported features and how user can use it.
+**Lite BMC Firmware Flash utility** to update the SEMA BMC firmware. It uses I2C (for arm) / SMBUS(for x86) to communicate with the Lite BMC. This document will help to understand the Flash Firmware Utility supported features and how user can use it.
 
 
 
@@ -14,9 +12,9 @@ Provides LiteBMC firmware Flash Utiluty on SMARC ARM & x86-64 platforms. It uses
 
 | Supported Hardware                                           | **Architecture** | **Build Environmental details**                              |
 | ------------------------------------------------------------ | ---------------- | ------------------------------------------------------------ |
-| SMARC LEC-PX30 with [Yocto Linux](https://docs.ipi.wiki/smarc-ipi/ipi-smarc-px30/YoctoImages.html#Binary-Image-download-Link), [Debian](https://docs.ipi.wiki/smarc-ipi/ipi-smarc-px30/DebianImages.html#Binary-Image-download-Link), [Ubuntu 18.04](https://docs.ipi.wiki/smarc-ipi/ipi-smarc-px30/UbuntuImages.html#Binary-Image-download-Link) images <BR>(GCC 7.4.0 already inside) <BR>SMARC LEC-iMX8M with [Yocto Linux](https://github.com/ADLINK/meta-adlink-nxp/blob/zeus/README.md#lec-imx8m-smarc-module) image  <BR>(GCC 7.4.0 already inside) | ARM-64bit        | Install required packages:<BR>        - Please install i2c-tools for Debian Image |
-| SMARC LEC-IMX6R2 with [Yocto Linux](https://github.com/ADLINK/meta-adlink-nxp/blob/zeus/README.md#lec-imx6r2-smarc-module) image | ARM-32bit        | GCC version :  7.4.0                                         |
-| IMB-M45/M45H with [Ubuntu 18.04 LTS](https://ubuntu.com/download/desktop) <br>AMITX-CF-G with [Ubuntu 18.04 LTS](https://ubuntu.com/download/desktop)<br>ADi-SA3X-CL with [Ubuntu 20.04 LTS](https://ubuntu.com/download/desktop) <br> | X86-64           | Install required packages:<BR>      - GCC version :  7.5.0  <br>      - i2c-tools |
+| **1. SMARC LEC-PX30** with [Yocto Linux](https://docs.ipi.wiki/smarc-ipi/ipi-smarc-px30/YoctoImages.html#Binary-Image-download-Link), [Debian](https://docs.ipi.wiki/smarc-ipi/ipi-smarc-px30/DebianImages.html#Binary-Image-download-Link), [Ubuntu 18.04](https://docs.ipi.wiki/smarc-ipi/ipi-smarc-px30/UbuntuImages.html#Binary-Image-download-Link) images <BR>(GCC 7.4.0 already inside) <BR>**2. SMARC LEC-iMX8M** with [Yocto Linux](https://github.com/ADLINK/meta-adlink-nxp/blob/zeus/README.md#lec-imx8m-smarc-module) image  <BR>(GCC 7.4.0 already inside) | ARM-64bit        | Install required packages:<BR>        - Please install i2c-tools for Debian Image |
+| **SMARC LEC-IMX6R2** with [Yocto Linux](https://github.com/ADLINK/meta-adlink-nxp/blob/zeus/README.md#lec-imx6r2-smarc-module) image | ARM-32bit        | GCC version :  7.4.0                                         |
+| **1. IMB-M45/M45H**with [Ubuntu 18.04 LTS](https://ubuntu.com/download/desktop) <br>**2. AMITX-CF-G** with [Ubuntu 18.04 LTS](https://ubuntu.com/download/desktop)<br>**3. ADi-SA3X-CL** with [Ubuntu 20.04 LTS](https://ubuntu.com/download/desktop) <br> | X86-64           | Install required packages:<BR>      - GCC version :  7.5.0  <br>      - i2c-tools |
 
 2. Git clone the source from https://github.com/ADLINK/litebmc-fwupd 
 
